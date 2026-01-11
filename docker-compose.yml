@@ -33,6 +33,10 @@ services:
       snmp:
         condition: service_healthy
     restart: unless-stopped
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=https://a3ff8269278d4d3b97682a713da1146a.ingest.us-central1.gcp.elastic.cloud:443
+      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=ApiKey NXoxVHJac0I3RFV3dVlERFJ2bzU6SUlEMnlXektPbTdJNFN2R3ZoaG1oQQ==
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=otel-snmp-collector,service.version=1.0.0,deployment.environment=production
 
 networks:
   otel-network:

@@ -11,22 +11,25 @@ receivers:
           value_type: int
         scalar_oids:
           - oid: "1.3.6.1.2.1.1.3.0"
-      system.cpu.load:
-        unit: "1"
-        gauge:
-          value_type: double
-        scalar_oids:
-          - oid: "1.3.6.1.4.1.2021.10.1.3.1"
+      # Note: CPU load OID 1.3.6.1.4.1.2021.10.1.3.1 returns STRING type
+      # which is not supported by the SNMP receiver for numeric metrics
+      # system.cpu.load:
+      #   unit: "1"
+      #   gauge:
+      #     value_type: double
+      #   scalar_oids:
+      #     - oid: "1.3.6.1.4.1.2021.10.1.3.1"
 
 processors:
   batch: # <--- MUST be indented
 
 exporters:
-  elasticsearch: # <--- MUST be indented
-    endpoints: ["https://a3ff8269278d4d3b97682a713da1146a.ingest.us-central1.gcp.elastic.cloud:443"]
-    api_key: "cWozNnBKc0I3RFV3dVlERGE5cDY6OV84OFhycmpmT3BfYWxJbGZEY0NfZw=="
-    logs_index: "otel-logs"
-    metrics_index: "otel-metrics"
+  otlp/elastic: # <--- MUST be indented
+    endpoint: "https://a3ff8269278d4d3b97682a713da1146a.ingest.us-central1.gcp.elastic.cloud:443"
+    headers:
+      Authorization: "ApiKey NXoxVHJac0I3RFV3dVlERFJ2bzU6SUlEMnlXektPbTdJNFN2R3ZoaG1oQQ=="
+    tls:
+      insecure: false
 
   debug: # <--- MUST be indented
     verbosity: detailed
@@ -36,4 +39,4 @@ service:
     metrics:
       receivers: [snmp]
       processors: [batch]
-      exporters: [debug, elasticsearch]
+      exporters: [debug, otlp/elastic]
