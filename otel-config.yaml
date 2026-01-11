@@ -11,14 +11,54 @@ receivers:
           value_type: int
         scalar_oids:
           - oid: "1.3.6.1.2.1.1.3.0"
-      # Note: CPU load OID 1.3.6.1.4.1.2021.10.1.3.1 returns STRING type
-      # which is not supported by the SNMP receiver for numeric metrics
-      # system.cpu.load:
-      #   unit: "1"
-      #   gauge:
-      #     value_type: double
-      #   scalar_oids:
-      #     - oid: "1.3.6.1.4.1.2021.10.1.3.1"
+      
+      # Memory metrics (UCD-SNMP-MIB)
+      system.memory.total:
+        unit: "By"
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.4.1.2021.4.5.0"
+      
+      system.memory.free:
+        unit: "By"
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.4.1.2021.4.6.0"
+      
+      system.memory.swap.total:
+        unit: "By"
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.4.1.2021.4.11.0"
+      
+      # CPU metrics (UCD-SNMP-MIB) - integer percentages
+      system.cpu.user:
+        unit: "%"
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.4.1.2021.11.9.0"
+      
+      system.cpu.system:
+        unit: "%"
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.4.1.2021.11.10.0"
+      
+      system.cpu.idle:
+        unit: "%"
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.4.1.2021.11.11.0"
+      
+      # Note: Interface metrics (table-based) require more complex configuration
+      # and may not be fully supported in this SNMP receiver version.
+      # Interface metrics can be added later with proper column_oids syntax.
 
 processors:
   batch: # <--- MUST be indented
