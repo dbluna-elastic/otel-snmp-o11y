@@ -1,0 +1,39 @@
+receivers:
+  snmp:  # <--- MUST be indented (2 spaces)
+    endpoint: "udp://snmp:161"
+    version: v2c
+    community: "public"
+    collection_interval: 30s
+    metrics:
+      system.uptime:
+        unit: s
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.2.1.1.3.0"
+      system.cpu.load:
+        unit: "1"
+        gauge:
+          value_type: double
+        scalar_oids:
+          - oid: "1.3.6.1.4.1.2021.10.1.3.1"
+
+processors:
+  batch: # <--- MUST be indented
+
+exporters:
+  elasticsearch: # <--- MUST be indented
+    endpoints: ["https://a3ff8269278d4d3b97682a713da1146a.ingest.us-central1.gcp.elastic.cloud:443"]
+    api_key: "cWozNnBKc0I3RFV3dVlERGE5cDY6OV84OFhycmpmT3BfYWxJbGZEY0NfZw=="
+    logs_index: "otel-logs"
+    metrics_index: "otel-metrics"
+
+  debug: # <--- MUST be indented
+    verbosity: detailed
+
+service:
+  pipelines:
+    metrics:
+      receivers: [snmp]
+      processors: [batch]
+      exporters: [debug, elasticsearch]
