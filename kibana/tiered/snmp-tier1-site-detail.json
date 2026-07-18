@@ -1,0 +1,413 @@
+{
+  "title": "SNMP \u2014 Site Detail",
+  "description": "Tier 1: health, inventory, topology edges, interface errors, and BGP for one site. Use the Site control; open Device Faceplate for a switch.",
+  "time_range": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "pinned_panels": [
+    {
+      "type": "esql_control",
+      "id": "site-ctrl",
+      "config": {
+        "title": "Site",
+        "variable_name": "site",
+        "variable_type": "values",
+        "control_type": "STATIC_VALUES",
+        "available_options": [
+          "HQ-DC1",
+          "Branch-NYC",
+          "Branch-CHI"
+        ],
+        "selected_options": [
+          "HQ-DC1"
+        ],
+        "single_select": true
+      }
+    }
+  ],
+  "panels": [
+    {
+      "type": "vis",
+      "id": "kpi-devices",
+      "grid": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS `Devices at site` = COUNT_DISTINCT(host.name)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Devices at site"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "kpi-ports-up",
+      "grid": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND host.type == \"switch\" AND interface.name IS NOT NULL AND STARTS_WITH(interface.name, \"Eth\") AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS oper = LAST(interface.status.oper, @timestamp) BY port_key | WHERE oper == \"up\" | STATS `Ports up` = COUNT(*)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Ports up"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "kpi-ports-down",
+      "grid": {
+        "x": 24,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND host.type == \"switch\" AND interface.name IS NOT NULL AND STARTS_WITH(interface.name, \"Eth\") AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS oper = LAST(interface.status.oper, @timestamp) BY port_key | WHERE oper == \"down\" | STATS `Ports down` = COUNT(*)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Ports down"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "kpi-bgp-down",
+      "grid": {
+        "x": 36,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND bgp_peer.peer_state IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS state = LAST(bgp_peer.peer_state, @timestamp) BY host.name, bgp_peer.remote_ip | WHERE state != \"Established\" | STATS `BGP peers down` = COUNT(*)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "BGP peers down"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "topology-edges",
+      "grid": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 14
+      },
+      "config": {
+        "title": "Site topology links (red = faulted uplink)",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM snmp-topology | WHERE doc_type == \"edge\" AND site == ?site | KEEP source, target, link_status | SORT link_status DESC, source, target"
+        },
+        "rows": [
+          {
+            "column": "source"
+          },
+          {
+            "column": "target"
+          }
+        ],
+        "metrics": [
+          {
+            "column": "link_status"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "device-inventory",
+      "grid": {
+        "x": 24,
+        "y": 5,
+        "w": 24,
+        "h": 14
+      },
+      "config": {
+        "title": "Device inventory (open faceplate for switches)",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS role = LAST(network.role, @timestamp), vendor = LAST(observer.vendor, @timestamp), oper = LAST(interface.status.oper, @timestamp) BY host.name, host.type, interface.name | STATS ports_down = COUNT(CASE(oper == \"down\" AND STARTS_WITH(interface.name, \"Eth\"), 1, null)), role = MAX(role), vendor = MAX(vendor) BY host.name, host.type | SORT host.type, host.name"
+        },
+        "rows": [
+          {
+            "column": "host.name"
+          },
+          {
+            "column": "host.type"
+          },
+          {
+            "column": "role"
+          },
+          {
+            "column": "vendor"
+          }
+        ],
+        "metrics": [
+          {
+            "column": "ports_down"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "topology-nodes",
+      "grid": {
+        "x": 0,
+        "y": 19,
+        "w": 24,
+        "h": 12
+      },
+      "config": {
+        "title": "Topology nodes by health",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "bar_horizontal",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM snmp-topology | WHERE doc_type == \"node\" AND site == ?site | KEEP host.name, ports_down, oper_status | SORT ports_down DESC, host.name"
+            },
+            "x": {
+              "column": "host.name"
+            },
+            "y": [
+              {
+                "column": "ports_down"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "errors-over-time",
+      "grid": {
+        "x": 24,
+        "y": 19,
+        "w": 24,
+        "h": 12
+      },
+      "config": {
+        "title": "Interface errors over time (by host)",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            },
+            "scale": "temporal",
+            "domain": {
+              "type": "fit",
+              "rounding": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "line",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND `interface.errors.in` IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS errors = SUM(COALESCE(`interface.errors.in`, 0) + COALESCE(`interface.errors.out`, 0)) BY BUCKET(@timestamp, 30, ?_tstart, ?_tend), host.name"
+            },
+            "x": {
+              "column": "BUCKET(@timestamp, 30, ?_tstart, ?_tend)",
+              "label": "@timestamp"
+            },
+            "y": [
+              {
+                "column": "errors"
+              }
+            ],
+            "breakdown_by": {
+              "column": "host.name"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "top-error-ifaces",
+      "grid": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 12
+      },
+      "config": {
+        "title": "Top interfaces by error count",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "bar_horizontal",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL iface = CONCAT(host.name, \" \u00b7 \", interface.name) | STATS err_in = LAST(`interface.errors.in`, @timestamp), err_out = LAST(`interface.errors.out`, @timestamp) BY iface | EVAL errs = COALESCE(err_in, 0) + COALESCE(err_out, 0) | WHERE errs > 0 | SORT errs DESC | LIMIT 10"
+            },
+            "x": {
+              "column": "iface"
+            },
+            "y": [
+              {
+                "column": "errs"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "bgp-table",
+      "grid": {
+        "x": 24,
+        "y": 31,
+        "w": 24,
+        "h": 12
+      },
+      "config": {
+        "title": "BGP peers (CHI eBGP Idle is the story)",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND bgp_peer.peer_state IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS peer_state = LAST(bgp_peer.peer_state, @timestamp), remote_asn = LAST(bgp_peer.remote_asn, @timestamp), prefixes_rx = LAST(bgp_peer.prefixes_received, @timestamp) BY host.name, bgp_peer.remote_ip | SORT peer_state, host.name"
+        },
+        "rows": [
+          {
+            "column": "host.name"
+          },
+          {
+            "column": "bgp_peer.remote_ip"
+          },
+          {
+            "column": "peer_state"
+          }
+        ],
+        "metrics": [
+          {
+            "column": "remote_asn"
+          },
+          {
+            "column": "prefixes_rx"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "down-ports-table",
+      "grid": {
+        "x": 0,
+        "y": 43,
+        "w": 48,
+        "h": 12
+      },
+      "config": {
+        "title": "Oper-down ports at this site",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS admin = LAST(interface.status.admin, @timestamp), oper = LAST(interface.status.oper, @timestamp) BY host.name, interface.name | WHERE oper == \"down\" | SORT host.name, interface.name"
+        },
+        "rows": [
+          {
+            "column": "host.name"
+          },
+          {
+            "column": "interface.name"
+          }
+        ],
+        "metrics": [
+          {
+            "column": "admin"
+          },
+          {
+            "column": "oper"
+          }
+        ]
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "nav",
+      "grid": {
+        "x": 0,
+        "y": 55,
+        "w": 48,
+        "h": 3
+      },
+      "config": {
+        "content": "**Navigate:** [\u2190 US Sites Overview](#/view/snmp-tier0-us-map) \u00b7 [Device Faceplate \u2192](#/view/snmp-tier2-device-faceplate) \u2014 set **Device** to a switch from the inventory (try `hq-access-sw-03` or `nyc-sw-02`)."
+      }
+    }
+  ]
+}

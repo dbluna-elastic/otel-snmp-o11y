@@ -1,269 +1,224 @@
 # otel-snmp-o11y
 
-OpenTelemetry SNMP observability demo that collects SNMP metrics and exports them to Elastic Cloud.
+Local Docker demo that simulates SNMP devices and ships live polls + traps into Elastic Cloud, with optional Network Topology sample data.
 
-## Architecture
+| Track | Data | How | Elastic Cloud destination |
+|-------|------|-----|---------------------------|
+| **A — Live SNMP (default)** | System info, interface status/counters, link up/down traps | snmpsim + Logstash + trap-sender | `metrics-snmp-demo`, `logs-snmp-demo` |
+| **B — Topology schema** | Interfaces, ARP, MAC, BGP, OSPF (multi-site) | Sample data generator | `logs-snmp.topology-default` |
+| **OTEL (optional)** | Host scalars (uptime, CPU, memory) | net-snmp + OTEL Collector | OTLP metrics indices |
 
-This project consists of two Docker containers:
+> **Elastic Cloud limitation:** The [Network Topology Kibana plugin](https://www.elastic.co/docs/solutions/observability/infra-and-hosts/network-topology) requires self-managed Kibana. Track B loads the same schema for Discover/ES|QL on Elastic Cloud.
 
-1. **SNMP Container**: Runs `net-snmp` daemon exposing system metrics (uptime, CPU load)
-2. **OTEL Collector Container**: Queries SNMP metrics and exports them to Elastic Cloud
+## Architecture (Track A)
 
 ```
-┌─────────────────┐         ┌──────────────────────┐         ┌──────────────┐
-│  SNMP Container │◄────────┤  OTEL Collector      │─────────►│ Elastic Cloud│
-│  (net-snmp)     │  SNMP   │  Container            │  HTTP   │              │
-│  Port: 161/udp  │  Query  │  Port: 4318           │         │              │
-└─────────────────┘         └──────────────────────┘         └──────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Docker Desktop                                         │
+│                                                         │
+│  ┌──────────────┐        ┌────────────────────┐         │
+│  │   snmpsim    │◄───────│     logstash       │         │
+│  │  (fake SNMP  │  poll  │  (snmp + snmptrap) │──┐      │
+│  │   devices)   │        │                    │  │      │
+│  └──────────────┘        └────────────────────┘  │      │
+│         ▲                                        │      │
+│  ┌──────────────┐                                │      │
+│  │ trap-sender  │── linkDown / linkUp every 45s ─┘      │
+│  └──────────────┘                                       │
+└─────────────────────────────────────────────────────────┘
+                         │ HTTPS
+                         ▼
+              ┌──────────────────────┐
+              │  Elastic Cloud       │
+              │  metrics-snmp-demo   │
+              │  logs-snmp-demo      │
+              └──────────────────────┘
 ```
+
+- **snmpsim** — answers SNMP GETs/walks; community string selects which simulated device
+- **Logstash** — polls every 30s (sys + IF-MIB table including `ifAdminStatus` / `ifOperStatus`), listens for traps on UDP/1162
+- **trap-sender** — fires linkDown then linkUp so Discover has live events
 
 ## Prerequisites
 
-- Docker and Docker Compose installed
-- Access to Elastic Cloud (endpoint and API key configured in `otel-config.yaml`)
+- Docker Desktop (~2 GB RAM free for containers)
+- Elastic Cloud deployment — create an API key with `write` + `auto_configure` on `metrics-snmp.*` and `logs-snmp.*`
+- Copy Cloud ID from the Elastic Cloud console
 
-## Quick Start
+## Setup
 
-1. **Build and start the containers:**
+1. **Configure credentials:**
+
    ```bash
-   docker-compose up -d
+   cp .env.example .env
+   # Set ES_CLOUD_ID, ES_API_KEY, and STACK_VERSION (match your deployment)
    ```
 
-2. **View logs:**
+   | Variable | Used by | Notes |
+   |----------|---------|-------|
+   | `ES_CLOUD_ID` | Logstash (Track A) | From Elastic Cloud console |
+   | `ES_API_KEY` | Logstash (Track A) | Key only, no `ApiKey` prefix |
+   | `STACK_VERSION` | Logstash image | e.g. `9.0.0` |
+   | `ELASTICSEARCH_URL` / `ELASTIC_API_KEY` | Track B topology | Elasticsearch API URL (`*.es.*`) |
+   | `ELASTIC_CLOUD_INGEST_ENDPOINT` / `ELASTIC_OTLP_AUTHORIZATION` | Optional OTEL profile | OTLP ingest |
+
+2. **Start Track A (live SNMP):**
+
    ```bash
-   # View all logs
-   docker-compose logs -f
-   
-   # View SNMP container logs
-   docker-compose logs -f snmp
-   
-   # View OTEL collector logs
-   docker-compose logs -f otel-collector
+   docker compose up -d --build
+   docker compose logs -f logstash
    ```
 
-3. **Stop the containers:**
+   First build installs the Logstash SNMP plugin (can take a few minutes).
+
+3. **Load topology sample data (Track B, optional):**
+
    ```bash
-   docker-compose down
+   ./topology/setup-topology.sh
+   node topology/generate_sample_data.mjs
+   # or: docker compose --profile topology run --rm topology-loader
    ```
 
-## Verification
+4. **Optional OTEL path:**
 
-### Test SNMP Container
+   ```bash
+   docker compose --profile otel up -d
+   ```
 
-Verify the SNMP container is responding:
+## Verify in Kibana (Track A)
 
-```bash
-# From your host machine (if snmp tools are installed)
-snmpget -v2c -c public localhost:161 1.3.6.1.2.1.1.3.0
+1. Create data views for `metrics-snmp-demo*` and `logs-snmp-demo*`
+2. Filter polls by device / interface fields from snmpsim
+3. Watch traps on `logs-snmp-demo*` — linkDown / linkUp about every 45s
 
-# Or from within the container
-docker-compose exec snmp snmpget -v2c -c public localhost 1.3.6.1.2.1.1.3.0
-```
+### Dashboard ideas
 
-**Expected output:**
-```
-iso.3.6.1.2.1.1.3.0 = Timeticks: (2226) 0:00:22.26
-```
+- Line: interface in/out octets per device
+- Table: top interfaces by throughput
+- Timeline: trap events with `event.action`
+- Metric: sysUpTime per device
 
-Test the CPU load OID:
-```bash
-docker-compose exec snmp snmpget -v2c -c public localhost 1.3.6.1.4.1.2021.10.1.3.1
-```
+## Track A devices (snmpsim communities)
 
-**Expected output:**
-```
-iso.3.6.1.4.1.2021.10.1.3.1 = STRING: "0.69"
-```
+| `host.name` | Community | Role |
+|-------------|-----------|------|
+| `core-switch-01` | `public` | Default snmpsim agent |
+| `edge-router-01` | `recorded/linux-full-walk` | Built-in recorded walk |
+| `access-switch-02` | `variation/multiplex` | Built-in variation |
 
-### Check OTEL Collector
+Polled fields include `sysDescr`, `sysUpTime`, `sysName`, `sysLocation`, and per-interface `ifDescr`, `ifAdminStatus`, `ifOperStatus`, `ifInOctets`, `ifOutOctets`.
 
-The OTEL collector logs will show:
-- SNMP queries being executed every 30 seconds
-- Metrics being collected (system.uptime, system.cpu.load)
-- Debug output showing metric values
-- Export attempts to Elastic Cloud
+## Track B: Topology sample network
 
-```bash
-# View all collector logs
-docker-compose logs otel-collector
+Multi-site sample data (HQ-DC1, Branch-NYC, Branch-CHI) with BGP/OSPF/ARP/MAC and port faults. See [`topology/example-queries.esql`](topology/example-queries.esql).
 
-# Filter for metrics
-docker-compose logs otel-collector | grep -i "system.uptime\|system.cpu"
+Built-in port fault scenarios:
 
-# Check for SNMP collection
-docker-compose logs otel-collector | grep -i "snmp\|metric"
-```
+- **HQ-DC1** link failure: `hq-dist-sw-01 Eth1/1` ↔ `hq-access-sw-01 Eth1/1`
+- **HQ-DC1** edge: `hq-access-sw-03 Eth1/4` admin-up / oper-down
+- **Branch-NYC** link failure: `nyc-sw-01 Eth1/2` ↔ `nyc-sw-03 Eth1/1`
+- **Branch-NYC** admin shutdown: `nyc-sw-02 Eth1/3`
+- **Branch-CHI** link failure: `chi-sw-01 Eth1/2` ↔ `chi-sw-02 Eth1/1`
 
-**Expected output in logs:**
-```
-Metric #0
-Descriptor:
-     -> Name: system.uptime
-     -> Description: 
-     -> Unit: s
-     -> DataType: Gauge
-NumberDataPoints #0
-Value: 565
-```
-
-### Verify Container Status
-
-Check that both containers are running and healthy:
+## Custom snmpsim recordings
 
 ```bash
-docker-compose ps
+snmpwalk -v2c -c public -On <device-ip> 1.3.6.1 > snmpsim-data/my-router.snmprec
 ```
 
-**Expected output:**
+Then add a host in [`pipeline/snmp.conf`](pipeline/snmp.conf):
+
+```ruby
+{ host => "udp:snmpsim/161" community => "custom/my-router" version => "2c" name => "hq-router" }
 ```
-NAME             IMAGE                                         STATUS
-otel-collector   otel/opentelemetry-collector-contrib:latest   Up X seconds
-snmp-server      otel-snmp-o11y-snmp                           Up X seconds (healthy)
-```
 
-### Verify Elastic Cloud
+## Dashboards
 
-1. Log into your Elastic Cloud dashboard
-2. Navigate to **Discover** or **Stack Management > Index Management**
-3. Look for indices:
-   - `otel-metrics` - SNMP metrics data
-   - `otel-logs` - Log data (if configured)
+### Tiered SNMP demo (map → site → faceplate)
 
-**Note:** If you see 404 errors in the OTEL collector logs when exporting to Elastic Cloud:
-- Verify the endpoint URL is correct in `otel-config.yaml`
-- Ensure the API key has write permissions
-- Check that indices can be auto-created or create them manually
-- Verify network connectivity to Elastic Cloud endpoint
+Built from [`../snmp-dashboard-design.md`](../snmp-dashboard-design.md). Presenter path: Tier 0 → pick a site → Tier 1 → pick a switch → Tier 2.
 
-## Configuration
+| Tier | Title | Open |
+|------|-------|------|
+| 0 | SNMP — US Sites Overview | [Dashboard](https://gawdzilla-0d3e9e.kb.us-east-2.aws.elastic-cloud.com/app/dashboards#/view/snmp-tier0-us-map) |
+| 1 | SNMP — Site Detail | [Dashboard](https://gawdzilla-0d3e9e.kb.us-east-2.aws.elastic-cloud.com/app/dashboards#/view/snmp-tier1-site-detail) |
+| 2 | SNMP — Device Faceplate | [Dashboard](https://gawdzilla-0d3e9e.kb.us-east-2.aws.elastic-cloud.com/app/dashboards#/view/snmp-tier2-device-faceplate) |
+| Map | SNMP Site Health | [Map](https://gawdzilla-0d3e9e.kb.us-east-2.aws.elastic-cloud.com/app/maps#/map/snmp-sites-health-map) |
 
-### SNMP Configuration
+Definitions and deploy:
 
-The SNMP container is configured with:
-- Community string: `public` (read-only access)
-- SNMP version: v2c
-- Default agent address: `udp:161` (uses snmpd default)
-- Exposed OIDs:
-  - `1.3.6.1.2.1.1.3.0` - System uptime (in timeticks)
-  - `1.3.6.1.4.1.2021.10.1.3.1` - CPU load (1-minute average)
-
-**Important:** The container uses `NET_BIND_SERVICE` capability to bind to port 161 (privileged port).
-
-To modify SNMP settings, edit `Dockerfile.snmp` and rebuild:
 ```bash
-docker-compose build snmp
-docker-compose up -d snmp
+# After Track B sample data is loaded:
+node kibana/tiered/deploy.mjs
+# Or only refresh site health / topology edges:
+node kibana/tiered/seed-sites-topology.mjs
 ```
 
-### OTEL Collector Configuration
+- Definitions: [`kibana/tiered/`](kibana/tiered/)
+- Design notes: [`../snmp-dashboard-design.md`](../snmp-dashboard-design.md)
+- Use the **Site** / **Device** controls at the top of each dashboard (no manual KQL needed)
+- Demo faults: `hq-access-sw-03 Eth1/4` oper-down; `nyc-sw-02 Eth1/3` admin-down; faulted uplinks show as `link_status=down` on Tier 1
 
-Edit `otel-config.yaml` to:
-- Change SNMP collection interval
-- Add/remove metrics
-- Modify Elastic Cloud exporter settings
-- Adjust debug verbosity
+### Legacy: SNMP Switch Port Status
 
-After changes, restart the collector:
+Track B switch port admin/oper view (single dashboard):  
+[Open](https://gawdzilla-0d3e9e.kb.us-east-2.aws.elastic-cloud.com/app/dashboards#/view/cf961475-5d6d-48f1-8d0f-feb316534599) · [`kibana/snmp-switch-port-dashboard.json`](kibana/snmp-switch-port-dashboard.json)
+
+### Switch faceplate (Vega-Lite)
+
+A 24-port (2×12) color-coded faceplate (also on Tier 2):
+
+| Color | Meaning |
+|-------|---------|
+| Green | Admin up, oper up |
+| Red | Admin up, oper down (link/cable fault) |
+| Gray | Admin down (intentional shut) |
+
+- Spec: [`kibana/vega/switch-faceplate-hq-access-sw-03.json`](kibana/vega/switch-faceplate-hq-access-sw-03.json) (hard-coded host) · context-aware: [`kibana/vega/switch-faceplate-context.json`](kibana/vega/switch-faceplate-context.json)
+- Row 1 = `Eth1/1`–`Eth1/12`, Row 2 = `Eth1/13`–`Eth1/24`
+
+Use time range **Last 15 minutes** after regenerating sample data.
+
+## Verification scripts
+
 ```bash
-docker-compose restart otel-collector
+./validate-config.sh
+./validate-config.sh --topology
+./test-environment.sh          # Track A containers
+./test-environment.sh --topology
 ```
 
 ## Troubleshooting
 
-### SNMP container not responding
-
-1. Check if the container is running:
-   ```bash
-   docker-compose ps
-   ```
-
-2. Check SNMP container logs:
-   ```bash
-   docker-compose logs snmp
-   ```
-
-3. Verify SNMP daemon is listening:
-   ```bash
-   docker-compose exec snmp netstat -ulnp | grep 161
-   ```
-
-### OTEL collector not connecting to SNMP
-
-1. Verify network connectivity:
-   ```bash
-   docker-compose exec otel-collector ping snmp
-   ```
-
-2. Check OTEL collector logs for connection errors:
-   ```bash
-   docker-compose logs otel-collector
-   ```
-
-3. Verify the endpoint in `otel-config.yaml` is set to `udp://snmp:161`
-
-### Metrics not appearing in Elastic Cloud
-
-1. Verify Elastic Cloud credentials in `otel-config.yaml`:
-   - Check the endpoint URL format: `https://<deployment-id>.ingest.<region>.gcp.elastic.cloud:443`
-   - Verify the API key is valid and has write permissions
-
-2. Check OTEL collector logs for export errors:
-   ```bash
-   docker-compose logs otel-collector | grep -i error
-   ```
-
-3. Common errors and solutions:
-   - **404 error**: Indices may not exist. Create `otel-metrics` and `otel-logs` indices manually, or ensure auto-creation is enabled
-   - **401/403 error**: API key lacks permissions. Generate a new API key with write access
-   - **Connection timeout**: Network connectivity issue. Verify the endpoint is accessible
-
-4. Verify metrics are being collected (even if export fails):
-   ```bash
-   docker-compose logs otel-collector | grep "system.uptime\|system.cpu"
-   ```
-   If metrics appear in logs, the SNMP collection is working; the issue is with Elastic Cloud export.
-
-5. Test Elastic Cloud connectivity:
-   ```bash
-   docker-compose exec otel-collector curl -H "Authorization: ApiKey <your-api-key>" <your-endpoint>
-   ```
-
-### Port conflicts
-
-If port 161 is already in use, modify `docker-compose.yml`:
-```yaml
-ports:
-  - "1161:161/udp"  # Use different host port
-```
-
-Then update `otel-config.yaml` if accessing from host, or keep `udp://snmp:161` for container-to-container communication.
-
-## Metrics Collected
-
-The following metrics are collected from the SNMP container:
-
-| Metric Name | OID | Type | Unit | Description |
-|------------|-----|------|------|-------------|
-| `system.uptime` | 1.3.6.1.2.1.1.3.0 | Gauge | s | System uptime in seconds |
-| `system.cpu.load` | 1.3.6.1.4.1.2021.10.1.3.1 | Gauge | 1 | 1-minute CPU load average |
-
-Metrics are collected every 30 seconds (configurable in `otel-config.yaml`).
+| Symptom | Check |
+|---------|-------|
+| Logstash can't reach snmpsim | Use hostname `snmpsim`, not `localhost` |
+| No data in Elastic Cloud | `docker compose logs logstash` — auth errors; API key privileges on `metrics-snmp.*` / `logs-snmp.*` |
+| Traps not arriving | trap-sender must target `logstash:1162`; wait ~20s after start |
+| Version mismatch | Set `STACK_VERSION` in `.env` to match your deployment |
+| Ugly OID field names | Adjust `oid_root_skip` in `pipeline/snmp.conf` |
+| First start slow | Logstash image build installs SNMP plugin once |
 
 ## Files
 
-- `Dockerfile.snmp` - SNMP container definition with net-snmp configuration
-- `docker-compose.yml` - Container orchestration with health checks and networking
-- `otel-config.yaml` - OpenTelemetry Collector configuration (SNMP receiver, batch processor, Elastic Cloud exporter)
-- `README.md` - This file
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Track A default; profiles `otel`, `topology` |
+| `Dockerfile.logstash` | Logstash + SNMP integration plugin |
+| `pipeline/snmp.conf` | SNMP poll + trap → Elastic Cloud data streams |
+| `snmpsim-data/` | Optional custom `.snmprec` recordings |
+| `otel-config.yaml` | Optional OTEL Collector config (`--profile otel`) |
+| `Dockerfile.snmp` | Optional net-snmp agent (`--profile otel`) |
+| `topology/*` | Track B schema setup + sample data |
+| `kibana/tiered/*` | Tiered dashboards (seed + deploy) |
+| `.env.example` | Credential template |
 
-## Testing
+## Related Links
 
-This setup has been tested and verified:
-- ✅ SNMP daemon responds to queries on port 161/udp
-- ✅ OTEL collector successfully queries SNMP metrics
-- ✅ Metrics are collected and formatted correctly (system.uptime, system.cpu.load)
-- ✅ Debug exporter shows metric values in logs
-- ⚠️ Elastic Cloud export requires valid credentials and index permissions
+- [SNMP Topology Data in Kibana](https://www.elastic.co/observability-labs/blog/snmp-topology-data-kibana-collection-canvas)
+- [Logstash SNMP integration](https://www.elastic.co/guide/en/logstash/current/plugins-integrations-snmp.html)
+- [snmpsim](https://github.com/etingof/snmpsim)
+- [Network Topology plugin](https://github.com/elastic/kibana-network-topology-plugin)
 
 ## License
 

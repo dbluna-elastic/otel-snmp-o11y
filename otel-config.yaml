@@ -56,18 +56,32 @@ receivers:
         scalar_oids:
           - oid: "1.3.6.1.4.1.2021.11.11.0"
       
-      # Note: Interface metrics (table-based) require more complex configuration
-      # and may not be fully supported in this SNMP receiver version.
-      # Interface metrics can be added later with proper column_oids syntax.
+      # Network metrics - using scalar OIDs for aggregate values
+      # Note: Table-based interface metrics (column_oids) require specific syntax
+      # that may not be fully supported in this SNMP receiver version.
+      # Using aggregate network statistics instead.
+      
+      network.interfaces.count:
+        unit: "{interfaces}"
+        gauge:
+          value_type: int
+        scalar_oids:
+          - oid: "1.3.6.1.2.1.2.1.0"
 
 processors:
+  resource:
+    attributes:
+      - key: agent.name
+        value: "Otel-snmp-collector"
+        action: upsert
+  
   batch: # <--- MUST be indented
 
 exporters:
   otlp/elastic: # <--- MUST be indented
-    endpoint: "https://a3ff8269278d4d3b97682a713da1146a.ingest.us-central1.gcp.elastic.cloud:443"
+    endpoint: ${env:ELASTIC_CLOUD_INGEST_ENDPOINT}
     headers:
-      Authorization: "ApiKey NXoxVHJac0I3RFV3dVlERFJ2bzU6SUlEMnlXektPbTdJNFN2R3ZoaG1oQQ=="
+      Authorization: ${env:ELASTIC_OTLP_AUTHORIZATION}
     tls:
       insecure: false
 
@@ -78,5 +92,5 @@ service:
   pipelines:
     metrics:
       receivers: [snmp]
-      processors: [batch]
+      processors: [resource, batch]
       exporters: [debug, otlp/elastic]

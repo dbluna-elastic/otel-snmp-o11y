@@ -1,0 +1,3 @@
+# Optional: place custom .snmprec recordings here and reference them as
+# community "custom/<name>" in pipeline/snmp.conf.
+# Example: snmpwalk -v2c -c public -On <device-ip> 1.3.6.1 > snmpsim-data/my-router.snmprec

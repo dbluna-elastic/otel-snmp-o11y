@@ -1,0 +1,312 @@
+{
+  "title": "SNMP \u2014 US Sites Overview",
+  "description": "Tier 0: multi-site SNMP health at a glance. Click a site in the table, then open Site Detail with the Site control set.",
+  "time_range": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "tags": [],
+  "pinned_panels": [
+    {
+      "type": "esql_control",
+      "id": "site-ctrl",
+      "config": {
+        "title": "Site",
+        "variable_name": "site",
+        "variable_type": "values",
+        "control_type": "STATIC_VALUES",
+        "available_options": [
+          "HQ-DC1",
+          "Branch-NYC",
+          "Branch-CHI"
+        ],
+        "selected_options": [
+          "HQ-DC1"
+        ],
+        "single_select": true
+      }
+    }
+  ],
+  "panels": [
+    {
+      "type": "vis",
+      "id": "kpi-devices",
+      "grid": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM snmp-sites | STATS `Total devices` = SUM(device_count)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Total devices"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "kpi-ports-down",
+      "grid": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM snmp-sites | STATS `Ports down` = SUM(ports_down)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Ports down"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "kpi-errors",
+      "grid": {
+        "x": 24,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM snmp-sites | STATS `Interface errors` = SUM(error_count)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Interface errors"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "kpi-critical-sites",
+      "grid": {
+        "x": 36,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM snmp-sites | WHERE status != \"healthy\" | STATS `Sites needing attention` = COUNT(*)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Sites needing attention"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "site-health-bars",
+      "grid": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 14
+      },
+      "config": {
+        "title": "Site health (ports down \u00b7 NYC should lead)",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "bar",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM snmp-sites | KEEP site, ports_down, status | SORT ports_down DESC"
+            },
+            "x": {
+              "column": "site"
+            },
+            "y": [
+              {
+                "column": "ports_down"
+              }
+            ],
+            "breakdown_by": {
+              "column": "status"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "site-status-table",
+      "grid": {
+        "x": 24,
+        "y": 5,
+        "w": 24,
+        "h": 14
+      },
+      "config": {
+        "title": "Sites inventory & status",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM snmp-sites | KEEP site, city, device_count, switch_count, ports_down, error_count, status, lat, lon | SORT ports_down DESC, site"
+        },
+        "rows": [
+          {
+            "column": "site"
+          },
+          {
+            "column": "city"
+          },
+          {
+            "column": "status"
+          }
+        ],
+        "metrics": [
+          {
+            "column": "device_count"
+          },
+          {
+            "column": "switch_count"
+          },
+          {
+            "column": "ports_down"
+          },
+          {
+            "column": "error_count"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "ports-down-by-site",
+      "grid": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 10
+      },
+      "config": {
+        "title": "Oper-down switch ports by site",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "bar_horizontal",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS oper = LAST(interface.status.oper, @timestamp) BY network.site, port_key | WHERE oper == \"down\" | STATS down_ports = COUNT(*) BY network.site | SORT down_ports DESC"
+            },
+            "x": {
+              "column": "network.site"
+            },
+            "y": [
+              {
+                "column": "down_ports"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "errors-by-site",
+      "grid": {
+        "x": 24,
+        "y": 21,
+        "w": 24,
+        "h": 10
+      },
+      "config": {
+        "title": "Interface error totals by site",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "bar_horizontal",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS err_in = LAST(`interface.errors.in`, @timestamp), err_out = LAST(`interface.errors.out`, @timestamp) BY network.site, port_key | EVAL errs = COALESCE(err_in, 0) + COALESCE(err_out, 0) | STATS error_count = SUM(errs) BY network.site | SORT error_count DESC"
+            },
+            "x": {
+              "column": "network.site"
+            },
+            "y": [
+              {
+                "column": "error_count"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "nav-tier1",
+      "grid": {
+        "x": 0,
+        "y": 31,
+        "w": 48,
+        "h": 3
+      },
+      "config": {
+        "content": "**Next:** Open [SNMP \u2014 Site Detail](#/view/snmp-tier1-site-detail) (Tier 1). Set the **Site** control to match the site that needs attention (NYC usually lights up first). Map layer is also available under **Maps \u2192 SNMP Site Health**."
+      }
+    }
+  ]
+}

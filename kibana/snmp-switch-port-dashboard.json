@@ -1,0 +1,142 @@
+{
+  "title": "SNMP Switch Port Status",
+  "description": "Switch interface admin/oper status from logs-snmp.topology-default (Track B)",
+  "time_range": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "vis",
+      "id": "ports-up",
+      "grid": { "x": 0, "y": 0, "w": 12, "h": 5 },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS latest = LAST(interface.status.oper, @timestamp) BY port_key | WHERE latest == \"up\" | STATS Ports_Up = COUNT(*)"
+        },
+        "metrics": [{ "type": "primary", "column": "Ports_Up" }]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "ports-down",
+      "grid": { "x": 12, "y": 0, "w": 12, "h": 5 },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS latest = LAST(interface.status.oper, @timestamp) BY port_key | WHERE latest == \"down\" | STATS Ports_Down = COUNT(*)"
+        },
+        "metrics": [{ "type": "primary", "column": "Ports_Down" }]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "admin-down",
+      "grid": { "x": 24, "y": 0, "w": 12, "h": 5 },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS latest = LAST(interface.status.admin, @timestamp) BY port_key | WHERE latest == \"down\" | STATS Admin_Down = COUNT(*)"
+        },
+        "metrics": [{ "type": "primary", "column": "Admin_Down" }]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "switch-count",
+      "grid": { "x": 36, "y": 0, "w": 12, "h": 5 },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS Switches = COUNT_DISTINCT(host.name)"
+        },
+        "metrics": [{ "type": "primary", "column": "Switches" }]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "status-bar",
+      "grid": { "x": 0, "y": 5, "w": 16, "h": 10 },
+      "config": {
+        "title": "Latest port oper status",
+        "type": "xy",
+        "layers": [
+          {
+            "type": "bar",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | EVAL port_key = CONCAT(host.name, \":\", interface.name) | STATS oper = LAST(interface.status.oper, @timestamp) BY port_key | STATS ports = COUNT(*) BY oper"
+            },
+            "x": { "column": "oper" },
+            "y": [{ "column": "ports" }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "down-by-switch",
+      "grid": { "x": 16, "y": 5, "w": 32, "h": 10 },
+      "config": {
+        "title": "Oper-down ports by switch",
+        "type": "xy",
+        "layers": [
+          {
+            "type": "bar_horizontal",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS oper = LAST(interface.status.oper, @timestamp) BY host.name, interface.name | WHERE oper == \"down\" | STATS down_ports = COUNT(*) BY host.name | SORT down_ports DESC"
+            },
+            "x": { "column": "host.name" },
+            "y": [{ "column": "down_ports" }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "featured-switch",
+      "grid": { "x": 0, "y": 15, "w": 48, "h": 12 },
+      "config": {
+        "title": "hq-access-sw-03 — all ports (admin / oper)",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == \"hq-access-sw-03\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS admin = LAST(interface.status.admin, @timestamp), oper = LAST(interface.status.oper, @timestamp) BY interface.name | SORT interface.name"
+        },
+        "rows": [{ "column": "interface.name" }],
+        "metrics": [
+          { "column": "admin" },
+          { "column": "oper" }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "all-down-ports",
+      "grid": { "x": 0, "y": 27, "w": 48, "h": 12 },
+      "config": {
+        "title": "All oper-down switch ports",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.type == \"switch\" AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS admin = LAST(interface.status.admin, @timestamp), oper = LAST(interface.status.oper, @timestamp) BY network.site, host.name, interface.name | WHERE oper == \"down\" | SORT network.site, host.name, interface.name"
+        },
+        "rows": [
+          { "column": "network.site" },
+          { "column": "host.name" },
+          { "column": "interface.name" }
+        ],
+        "metrics": [
+          { "column": "admin" },
+          { "column": "oper" }
+        ]
+      }
+    }
+  ]
+}

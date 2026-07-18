@@ -1,0 +1,5 @@
+ARG STACK_VERSION=9.0.0
+FROM docker.elastic.co/logstash/logstash:${STACK_VERSION}
+
+# SNMP poll + trap inputs (Logstash integration plugin)
+RUN bin/logstash-plugin install logstash-integration-snmp

@@ -1,0 +1,373 @@
+{
+  "title": "SNMP \u2014 Device Faceplate",
+  "description": "Tier 2: SolarWinds-style port faceplate for one switch. Use Site + Device controls. Demo: hq-access-sw-03 Eth1/4 oper-down; nyc-sw-02 Eth1/3 admin-down.",
+  "time_range": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "pinned_panels": [
+    {
+      "type": "esql_control",
+      "id": "site-ctrl",
+      "config": {
+        "title": "Site",
+        "variable_name": "site",
+        "variable_type": "values",
+        "control_type": "STATIC_VALUES",
+        "available_options": [
+          "HQ-DC1",
+          "Branch-NYC",
+          "Branch-CHI"
+        ],
+        "selected_options": [
+          "HQ-DC1"
+        ],
+        "single_select": true
+      }
+    },
+    {
+      "type": "esql_control",
+      "id": "device-ctrl",
+      "config": {
+        "title": "Device",
+        "variable_name": "device",
+        "variable_type": "values",
+        "control_type": "VALUES_FROM_QUERY",
+        "esql_query": "FROM logs-snmp.topology-default | WHERE network.site == ?site AND host.type == \"switch\" AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS c = COUNT() BY host.name | SORT host.name | KEEP host.name",
+        "selected_options": [
+          "hq-access-sw-03"
+        ],
+        "single_select": true
+      }
+    }
+  ],
+  "panels": [
+    {
+      "type": "vis",
+      "id": "hdr-hostname",
+      "grid": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS n = COUNT() | EVAL `Selected device` = 1"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Selected device"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "hdr-ports-up",
+      "grid": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND STARTS_WITH(interface.name, \"Eth1/\") AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS oper = LAST(interface.status.oper, @timestamp) BY interface.name | WHERE oper == \"up\" | STATS `Ports up` = COUNT(*)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Ports up"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "hdr-ports-down",
+      "grid": {
+        "x": 24,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND STARTS_WITH(interface.name, \"Eth1/\") AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS oper = LAST(interface.status.oper, @timestamp) BY interface.name | WHERE oper == \"down\" | STATS `Ports down` = COUNT(*)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Ports down"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "hdr-admin-down",
+      "grid": {
+        "x": 36,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "config": {
+        "type": "metric",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND STARTS_WITH(interface.name, \"Eth1/\") AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS admin = LAST(interface.status.admin, @timestamp) BY interface.name | WHERE admin == \"down\" | STATS `Admin down` = COUNT(*)"
+        },
+        "metrics": [
+          {
+            "type": "primary",
+            "column": "Admin down"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "faceplate-heatmap",
+      "grid": {
+        "x": 0,
+        "y": 5,
+        "w": 48,
+        "h": 14
+      },
+      "config": {
+        "title": "Port faceplate (row \u00d7 col \u00b7 2=up \u00b7 1=oper-down \u00b7 0=admin-down)",
+        "type": "heatmap",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND STARTS_WITH(interface.name, \"Eth1/\") AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS admin = LAST(interface.status.admin, @timestamp), oper = LAST(interface.status.oper, @timestamp) BY interface.name | EVAL port_num = TO_INTEGER(REPLACE(interface.name, \"Eth1/\", \"\")) | EVAL row = CASE(port_num <= 12, \"R1 Eth1/1-12\", \"R2 Eth1/13-24\") | EVAL col = CASE(port_num <= 12, port_num, port_num - 12) | EVAL status_code = CASE(admin == \"down\", 0, oper == \"down\", 1, 2) | KEEP row, col, status_code, interface.name | SORT row, col"
+        },
+        "x": {
+          "column": "col"
+        },
+        "y": {
+          "column": "row"
+        },
+        "metric": {
+          "column": "status_code"
+        }
+      }
+    },
+    {
+      "type": "vis",
+      "id": "device-header-table",
+      "grid": {
+        "x": 0,
+        "y": 19,
+        "w": 48,
+        "h": 8
+      },
+      "config": {
+        "title": "Device header",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS site = LAST(network.site, @timestamp), role = LAST(network.role, @timestamp), vendor = LAST(observer.vendor, @timestamp), model = LAST(observer.sys_descr, @timestamp), mgmt_ip = LAST(host.ip, @timestamp) BY host.name"
+        },
+        "rows": [
+          {
+            "column": "host.name"
+          },
+          {
+            "column": "site"
+          },
+          {
+            "column": "role"
+          },
+          {
+            "column": "vendor"
+          }
+        ],
+        "metrics": [
+          {
+            "column": "mgmt_ip"
+          },
+          {
+            "column": "model"
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "traffic-sparkline",
+      "grid": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 10
+      },
+      "config": {
+        "title": "In/out bytes over time",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            },
+            "scale": "temporal",
+            "domain": {
+              "type": "fit",
+              "rounding": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "line",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND `interface.traffic.in.bytes` IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS in_bytes = SUM(`interface.traffic.in.bytes`), out_bytes = SUM(`interface.traffic.out.bytes`) BY BUCKET(@timestamp, 30, ?_tstart, ?_tend)"
+            },
+            "x": {
+              "column": "BUCKET(@timestamp, 30, ?_tstart, ?_tend)",
+              "label": "@timestamp"
+            },
+            "y": [
+              {
+                "column": "in_bytes",
+                "format": {
+                  "type": "bytes",
+                  "decimals": 1
+                }
+              },
+              {
+                "column": "out_bytes",
+                "format": {
+                  "type": "bytes",
+                  "decimals": 1
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "error-sparkline",
+      "grid": {
+        "x": 24,
+        "y": 27,
+        "w": 24,
+        "h": 10
+      },
+      "config": {
+        "title": "Interface errors over time",
+        "type": "xy",
+        "axis": {
+          "x": {
+            "title": {
+              "visible": false
+            },
+            "scale": "temporal",
+            "domain": {
+              "type": "fit",
+              "rounding": false
+            }
+          },
+          "y": {
+            "title": {
+              "visible": false
+            }
+          }
+        },
+        "layers": [
+          {
+            "type": "area",
+            "data_source": {
+              "type": "esql",
+              "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND `interface.errors.in` IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS errors = SUM(COALESCE(`interface.errors.in`, 0) + COALESCE(`interface.errors.out`, 0)) BY BUCKET(@timestamp, 30, ?_tstart, ?_tend)"
+            },
+            "x": {
+              "column": "BUCKET(@timestamp, 30, ?_tstart, ?_tend)",
+              "label": "@timestamp"
+            },
+            "y": [
+              {
+                "column": "errors"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "vis",
+      "id": "full-port-table",
+      "grid": {
+        "x": 0,
+        "y": 37,
+        "w": 48,
+        "h": 16
+      },
+      "config": {
+        "title": "All ports \u2014 admin / oper / traffic / errors",
+        "type": "data_table",
+        "data_source": {
+          "type": "esql",
+          "query": "FROM logs-snmp.topology-default | WHERE host.name == ?device AND interface.name IS NOT NULL AND @timestamp <= ?_tend AND @timestamp > ?_tstart | STATS admin = LAST(interface.status.admin, @timestamp), oper = LAST(interface.status.oper, @timestamp), speed = LAST(interface.speed, @timestamp), in_bytes = LAST(`interface.traffic.in.bytes`, @timestamp), out_bytes = LAST(`interface.traffic.out.bytes`, @timestamp), in_err = LAST(`interface.errors.in`, @timestamp), out_err = LAST(`interface.errors.out`, @timestamp) BY interface.name | SORT interface.name"
+        },
+        "rows": [
+          {
+            "column": "interface.name"
+          }
+        ],
+        "metrics": [
+          {
+            "column": "admin"
+          },
+          {
+            "column": "oper"
+          },
+          {
+            "column": "speed"
+          },
+          {
+            "column": "in_bytes"
+          },
+          {
+            "column": "out_bytes"
+          },
+          {
+            "column": "in_err"
+          },
+          {
+            "column": "out_err"
+          }
+        ]
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "nav",
+      "grid": {
+        "x": 0,
+        "y": 53,
+        "w": 48,
+        "h": 3
+      },
+      "config": {
+        "content": "**Navigate:** [\u2190 Site Detail](#/view/snmp-tier1-site-detail) \u00b7 [US Sites Overview](#/view/snmp-tier0-us-map) \u2014 green=up, red=oper-down, dark=admin-down on the faceplate heatmap."
+      }
+    }
+  ]
+}

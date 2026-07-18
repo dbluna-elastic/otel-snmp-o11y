@@ -1,5 +1,70 @@
 services:
+  # ── Track A: live SNMP (snmpsim + Logstash + traps) ──────────────────────
+  snmpsim:
+    image: tandrup/snmpsim
+    container_name: snmpsim
+    ports:
+      - "1161:161/udp"
+    volumes:
+      - ./snmpsim-data:/usr/local/snmpsim/data/custom:ro
+    networks:
+      - snmp-network
+    restart: unless-stopped
+
+  logstash:
+    build:
+      context: .
+      dockerfile: Dockerfile.logstash
+      args:
+        STACK_VERSION: ${STACK_VERSION:-9.0.0}
+    image: otel-snmp-o11y-logstash:${STACK_VERSION:-9.0.0}
+    container_name: logstash-snmp
+    depends_on:
+      - snmpsim
+    environment:
+      LS_JAVA_OPTS: "-Xms512m -Xmx512m"
+      ELASTICSEARCH_URL: ${ELASTICSEARCH_URL}
+      ES_API_KEY: ${ES_API_KEY}
+      XPACK_MONITORING_ENABLED: "false"
+    ports:
+      - "1162:1162/udp"
+    volumes:
+      - ./pipeline:/usr/share/logstash/pipeline:ro
+    networks:
+      - snmp-network
+    restart: unless-stopped
+
+  trap-sender:
+    image: polinux/snmpd
+    container_name: trap-sender
+    depends_on:
+      - logstash
+    networks:
+      - snmp-network
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "trap-sender: waiting for Logstash..."
+        sleep 20
+        while true; do
+          echo "trap-sender: linkDown ifIndex=2"
+          snmptrap -v2c -c public logstash:1162 '' 1.3.6.1.6.3.1.1.5.3 \
+            1.3.6.1.2.1.2.2.1.1.2 i 2 \
+            1.3.6.1.2.1.2.2.1.7.2 i 1 \
+            1.3.6.1.2.1.2.2.1.8.2 i 2 || true
+          sleep 45
+          echo "trap-sender: linkUp ifIndex=2"
+          snmptrap -v2c -c public logstash:1162 '' 1.3.6.1.6.3.1.1.5.4 \
+            1.3.6.1.2.1.2.2.1.1.2 i 2 \
+            1.3.6.1.2.1.2.2.1.7.2 i 1 \
+            1.3.6.1.2.1.2.2.1.8.2 i 1 || true
+          sleep 45
+        done
+    restart: unless-stopped
+
+  # ── Optional: OTEL path (profile: otel) ──────────────────────────────────
   snmp:
+    profiles: ["otel"]
     build:
       context: .
       dockerfile: Dockerfile.snmp
@@ -7,7 +72,7 @@ services:
     ports:
       - "161:161/udp"
     networks:
-      - otel-network
+      - snmp-network
     restart: unless-stopped
     cap_add:
       - NET_BIND_SERVICE
@@ -19,25 +84,46 @@ services:
       start_period: 10s
 
   otel-collector:
+    profiles: ["otel"]
     image: otel/opentelemetry-collector-contrib:latest
     container_name: otel-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-config.yaml:/etc/otel-collector-config.yaml:ro
     ports:
-      - "4317:4317"   # OTLP gRPC receiver
-      - "4318:4318"    # OTLP HTTP receiver
+      - "4317:4317"
+      - "4318:4318"
     networks:
-      - otel-network
+      - snmp-network
     depends_on:
       snmp:
         condition: service_healthy
     restart: unless-stopped
     environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=https://a3ff8269278d4d3b97682a713da1146a.ingest.us-central1.gcp.elastic.cloud:443
-      - OTEL_EXPORTER_OTLP_HEADERS=Authorization=ApiKey NXoxVHJac0I3RFV3dVlERFJ2bzU6SUlEMnlXektPbTdJNFN2R3ZoaG1oQQ==
+      - ELASTIC_CLOUD_INGEST_ENDPOINT=${ELASTIC_CLOUD_INGEST_ENDPOINT}
+      - ELASTIC_OTLP_AUTHORIZATION=${ELASTIC_OTLP_AUTHORIZATION}
       - OTEL_RESOURCE_ATTRIBUTES=service.name=otel-snmp-collector,service.version=1.0.0,deployment.environment=production
 
+  # ── Optional: topology sample data (profile: topology) ───────────────────
+  topology-loader:
+    image: node:20-alpine
+    profiles: ["topology"]
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    environment:
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL}
+      - ELASTIC_API_KEY=${ELASTIC_API_KEY}
+      - ELASTIC_USER=${ELASTIC_USER:-elastic}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache curl bash &&
+        ./topology/setup-topology.sh &&
+        node topology/generate_sample_data.mjs
+    restart: "no"
+
 networks:
-  otel-network:
+  snmp-network:
     driver: bridge

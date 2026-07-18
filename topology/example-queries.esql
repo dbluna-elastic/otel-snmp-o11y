@@ -1,0 +1,41 @@
+// Example ES|QL queries for logs-snmp.topology-default
+// Run in Kibana → Discover → ES|QL (Elastic Cloud)
+// Use time range: Last 15 minutes (sample data uses current timestamps)
+
+// BGP sessions not in Established state
+FROM logs-snmp.topology-default
+| WHERE bgp_peer.peer_state IS NOT NULL AND bgp_peer.peer_state != "Established"
+| KEEP @timestamp, host.name, bgp_peer.remote_ip, bgp_peer.peer_state, network.site
+
+// All oper-down ports on switches (any vendor/site)
+FROM logs-snmp.topology-default
+| WHERE host.type == "switch" AND interface.status.oper == "down"
+| KEEP @timestamp, host.name, interface.name, interface.status.admin, interface.status.oper, network.site
+| SORT network.site, host.name
+
+// Admin-up but oper-down (cable/link failures)
+FROM logs-snmp.topology-default
+| WHERE host.type == "switch"
+  AND interface.status.admin == "up" AND interface.status.oper == "down"
+| KEEP @timestamp, host.name, interface.name, network.site, interface.errors.in
+
+// Admin-down ports (intentional shutdown)
+FROM logs-snmp.topology-default
+| WHERE host.type == "switch" AND interface.status.admin == "down"
+| KEEP @timestamp, host.name, interface.name, interface.status.oper, network.site
+
+// Oper-down ports grouped by site and switch
+FROM logs-snmp.topology-default
+| WHERE host.type == "switch" AND interface.status.oper == "down"
+| STATS down_ports = COUNT(*) BY network.site, host.name
+| SORT network.site, host.name
+
+// OSPF neighbors not in Full state
+FROM logs-snmp.topology-default
+| WHERE ospf_neighbor.state IS NOT NULL AND ospf_neighbor.state != "Full"
+| KEEP @timestamp, host.name, ospf_neighbor.neighbor_ip, ospf_neighbor.state, network.site
+
+// ARP entries for a specific site
+FROM logs-snmp.topology-default
+| WHERE arp.ip_addr IS NOT NULL AND network.site == "HQ-DC1"
+| KEEP @timestamp, host.name, arp.ip_addr, arp.mac_addr
